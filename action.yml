@@ -55,10 +55,12 @@ runs:
         set -euo pipefail
         INSTALL_DIR="${RUNNER_TEMP}/tinx-bin"
         mkdir -p "${INSTALL_DIR}"
+        export TINX_INSTALL_DIR="${INSTALL_DIR}"
         echo "TINX_INSTALL_DIR=${INSTALL_DIR}" >> "$GITHUB_ENV"
         echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
         curl -fsSL "${INSTALL_URL}" | bash
-        "${INSTALL_DIR}/tinx" version
+        command -v tinx
+        tinx version
 
     - name: Run tinx
       shell: bash

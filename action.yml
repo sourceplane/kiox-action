@@ -56,11 +56,15 @@ runs:
         INSTALL_DIR="${RUNNER_TEMP}/tinx-bin"
         mkdir -p "${INSTALL_DIR}"
         export TINX_INSTALL_DIR="${INSTALL_DIR}"
+        export PATH="${INSTALL_DIR}:${PATH}"
         echo "TINX_INSTALL_DIR=${INSTALL_DIR}" >> "$GITHUB_ENV"
         echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
         curl -fsSL "${INSTALL_URL}" | bash
-        command -v tinx
-        tinx version
+        TINX_BIN="$(command -v tinx || true)"
+        if [ -z "${TINX_BIN}" ]; then
+          TINX_BIN="${INSTALL_DIR}/tinx"
+        fi
+        "${TINX_BIN}" version
 
     - name: Run tinx
       shell: bash

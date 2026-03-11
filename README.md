@@ -18,7 +18,7 @@ This keeps providers portable across local/CI environments.
 - `outputs` (optional): newline-delimited `name=path`
 - `artifacts` (optional): newline-delimited file paths
 - `artifact-name` (optional, default `tinx-artifacts`)
-- `tinx-version` (optional, default `latest`)
+- `tinx-version` (optional, default `v0.1.4`)
 - `install-url` (optional, default official `install.sh` URL)
 
 ## Outputs
@@ -86,4 +86,3 @@ jobs:
 - `run` is intentionally aligned with CLI syntax.
 - Output file paths are resolved from `working-directory` unless absolute.
 - Installation follows standard setup-action behavior: path is exported for subsequent steps, and the action executes via a deterministic `TINX_BIN` path.
-- When `tinx-version: latest` is used, the action resolves the release tag via authenticated GitHub API (`github.token`) to reduce rate-limit failures.

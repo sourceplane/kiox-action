@@ -85,3 +85,4 @@ jobs:
 - Keep provider behavior inside provider logic; avoid action-level workflow abstraction.
 - `run` is intentionally aligned with CLI syntax.
 - Output file paths are resolved from `working-directory` unless absolute.
+- Installation follows standard setup-action behavior: path is exported for subsequent steps, and the action executes via a deterministic `TINX_BIN` path.

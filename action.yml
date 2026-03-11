@@ -51,11 +51,33 @@ runs:
       env:
         TINX_VERSION: ${{ inputs.tinx-version }}
         INSTALL_URL: ${{ inputs.install-url }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         INSTALL_DIR="${RUNNER_TEMP}/tinx-bin"
         mkdir -p "${INSTALL_DIR}"
         export TINX_INSTALL_DIR="${INSTALL_DIR}"
+
+        if [ "${TINX_VERSION}" = "latest" ]; then
+          API_URL="https://api.github.com/repos/sourceplane/tinx/releases/latest"
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            RESOLVED_VERSION="$(curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API_URL}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+          else
+            RESOLVED_VERSION="$(curl -fsSL "${API_URL}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+          fi
+
+          if [ -z "${RESOLVED_VERSION}" ]; then
+            echo "warning: could not resolve latest tinx release; falling back to v0.1.4" >&2
+            RESOLVED_VERSION="v0.1.4"
+          fi
+
+          export TINX_VERSION="${RESOLVED_VERSION}"
+        fi
+
         echo "TINX_INSTALL_DIR=${INSTALL_DIR}" >> "$GITHUB_ENV"
         echo "TINX_BIN=${INSTALL_DIR}/tinx" >> "$GITHUB_ENV"
         echo "${INSTALL_DIR}" >> "$GITHUB_PATH"

@@ -86,3 +86,4 @@ jobs:
 - `run` is intentionally aligned with CLI syntax.
 - Output file paths are resolved from `working-directory` unless absolute.
 - Installation follows standard setup-action behavior: path is exported for subsequent steps, and the action executes via a deterministic `TINX_BIN` path.
+- When `tinx-version: latest` is used, the action resolves the release tag via authenticated GitHub API (`github.token`) to reduce rate-limit failures.

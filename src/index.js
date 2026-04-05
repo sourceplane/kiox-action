@@ -6,129 +6,233 @@ const path = require('node:path');
 const os = require('node:os');
 const { DefaultArtifactClient } = require('@actions/artifact');
 
-function parseMultiline(input) {
+/* ── Helpers ────────────────────────────────────────────── */
+
+function lines(input) {
   return (input || '')
     .split(/\r?\n/)
-    .map(line => line.trim())
+    .map(l => l.trim())
     .filter(Boolean);
 }
 
-function parseOutputMappings(input) {
-  const mappings = parseMultiline(input);
-  return mappings.map(entry => {
-    const index = entry.indexOf('=');
-    if (index <= 0 || index === entry.length - 1) {
-      throw new Error(`Invalid outputs entry '${entry}', expected 'name=path'`);
+function parseOutputMappings(raw) {
+  return lines(raw).map(entry => {
+    const i = entry.indexOf('=');
+    if (i <= 0 || i === entry.length - 1) {
+      throw new Error(`Invalid output mapping '${entry}' — expected name=path`);
     }
-    return {
-      name: entry.slice(0, index).trim(),
-      filePath: entry.slice(index + 1).trim()
-    };
+    return { name: entry.slice(0, i).trim(), path: entry.slice(i + 1).trim() };
   });
 }
 
-function resolvePath(baseDir, candidate) {
-  if (path.isAbsolute(candidate)) {
-    return candidate;
-  }
-  return path.join(baseDir, candidate);
+function abs(base, p) {
+  return path.isAbsolute(p) ? p : path.join(base, p);
 }
 
-async function runCmd(command, args, options = {}) {
-  const result = await exec.exec(command, args, {
+function shellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''" ) + "'";
+}
+
+async function fileExists(p) {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function capture(bin, args) {
+  let stdout = '';
+  await exec.exec(bin, args, {
+    listeners: { stdout: d => { stdout += d.toString(); } },
+    silent: true,
+  });
+  return stdout.trim();
+}
+
+/* ── Install ────────────────────────────────────────────── */
+
+async function installTinx(version, installUrl) {
+  const dir = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-bin');
+  await fsp.mkdir(dir, { recursive: true });
+
+  core.exportVariable('TINX_INSTALL_DIR', dir);
+  core.addPath(dir);
+
+  const url = installUrl || 'https://raw.githubusercontent.com/sourceplane/tinx/main/install.sh';
+  const script = [
+    `export TINX_INSTALL_DIR=${shellQuote(dir)}`,
+    `export TINX_VERSION=${shellQuote(version)}`,
+    `curl -fsSL ${shellQuote(url)} | bash`,
+  ].join('\n');
+
+  await exec.exec('bash', ['-e', '-o', 'pipefail', '-c', script], {
     failOnStdErr: false,
-    ignoreReturnCode: false,
-    ...options
   });
-  return result;
+
+  const bin = path.join(dir, 'tinx');
+  await fsp.access(bin, fs.constants.X_OK);
+
+  const ver = await capture(bin, ['version']);
+  core.info(`tinx ${ver} installed → ${bin}`);
+  core.setOutput('tinx-version', ver);
+  return bin;
 }
 
-async function installTinx({ version, installUrl }) {
-  const installDir = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-bin');
-  await fsp.mkdir(installDir, { recursive: true });
+/* ── Workspace ──────────────────────────────────────────── */
 
-  core.exportVariable('TINX_INSTALL_DIR', installDir);
-  core.exportVariable('TINX_BIN', path.join(installDir, 'tinx'));
-  core.addPath(installDir);
+async function initWorkspace(bin, workspace, providers, cwd) {
+  const resolved = abs(cwd, workspace);
+  const isFile = (await fileExists(resolved)) && (await fsp.stat(resolved)).isFile();
+  let name;
 
-  const shellScript = `set -euo pipefail\nexport TINX_INSTALL_DIR=${JSON.stringify(installDir)}\nexport TINX_VERSION=${JSON.stringify(version)}\ncurl -fsSL ${JSON.stringify(installUrl)} | bash`;
-  await runCmd('bash', ['-lc', shellScript]);
+  if (isFile) {
+    core.info(`Initializing workspace from manifest: ${resolved}`);
+    await exec.exec(bin, ['init', resolved], { cwd });
 
-  const tinxBin = path.join(installDir, 'tinx');
-  await fsp.access(tinxBin, fs.constants.X_OK);
-  await runCmd(tinxBin, ['version']);
-
-  return tinxBin;
-}
-
-async function runTinx(tinxBin, runSpec, workingDirectory) {
-  const trimmed = (runSpec || '').trim();
-  if (!trimmed) {
-    throw new Error("'run' input is required");
+    const yaml = await fsp.readFile(resolved, 'utf8');
+    const m = yaml.match(/^workspace:\s*(.+)$/m);
+    if (!m) {
+      throw new Error(
+        `Cannot extract workspace name from ${workspace}. Ensure the manifest contains a 'workspace:' field.`
+      );
+    }
+    name = m[1].trim();
+  } else {
+    name = workspace;
+    const args = ['init', name];
+    for (const p of providers) {
+      args.push('-p', ...p.split(/\s+/));
+    }
+    core.info(`Initializing workspace '${name}' with ${providers.length} provider(s)`);
+    await exec.exec(bin, args, { cwd });
   }
-  const shellCommand = `${JSON.stringify(tinxBin)} run ${trimmed}`;
-  await runCmd('bash', ['-lc', shellCommand], { cwd: workingDirectory });
+
+  core.exportVariable('TINX_WORKSPACE', name);
+  return name;
 }
 
-async function collectOutputs(outputMappingsInput, workingDirectory) {
-  const mappings = parseOutputMappings(outputMappingsInput);
+/* ── Providers (standalone) ─────────────────────────────── */
+
+async function installProviders(bin, providers, cwd) {
+  for (const spec of providers) {
+    core.info(`Installing provider: ${spec}`);
+    const args = ['install', ...spec.split(/\s+/)];
+    await exec.exec(bin, args, { cwd });
+  }
+}
+
+/* ── Run ────────────────────────────────────────────────── */
+
+async function runCommands(bin, script, workspaceName, cwd) {
+  const parts = [];
+  if (workspaceName) {
+    parts.push(`${shellQuote(bin)} use ${shellQuote(workspaceName)}`);
+  }
+  parts.push(script);
+
+  await exec.exec('bash', ['-e', '-o', 'pipefail', '-c', parts.join('\n')], {
+    cwd,
+    failOnStdErr: false,
+  });
+}
+
+/* ── Outputs ────────────────────────────────────────────── */
+
+async function collectOutputs(raw, cwd) {
+  const mappings = parseOutputMappings(raw);
+  if (!mappings.length) return;
+
   const payload = {};
-
-  for (const mapping of mappings) {
-    const absolute = resolvePath(workingDirectory, mapping.filePath);
-    const value = await fsp.readFile(absolute, 'utf8');
-    core.setOutput(mapping.name, value);
-    payload[mapping.name] = value;
+  for (const m of mappings) {
+    const p = abs(cwd, m.path);
+    const val = (await fsp.readFile(p, 'utf8')).trim();
+    core.setOutput(m.name, val);
+    payload[m.name] = val;
   }
-
   core.setOutput('outputs-json', JSON.stringify(payload));
 }
 
-async function uploadArtifacts(artifactsInput, artifactName, workingDirectory) {
-  const artifactPaths = parseMultiline(artifactsInput).map(item => resolvePath(workingDirectory, item));
-  if (!artifactPaths.length) {
-    return;
-  }
+/* ── Artifacts ──────────────────────────────────────────── */
 
-  const filesToUpload = [];
-  for (const artifactPath of artifactPaths) {
+async function uploadArtifacts(raw, name, cwd) {
+  const paths = lines(raw).map(p => abs(cwd, p));
+  if (!paths.length) return;
+
+  const files = [];
+  for (const p of paths) {
     try {
-      const stat = await fsp.stat(artifactPath);
-      if (stat.isFile()) {
-        filesToUpload.push(artifactPath);
-      }
+      if ((await fsp.stat(p)).isFile()) files.push(p);
     } catch {
-      // Skip non-existing paths to keep behavior compatible with optional artifacts.
+      /* skip missing */
     }
   }
 
-  if (!filesToUpload.length) {
+  if (!files.length) {
     core.info('No artifact files found to upload.');
     return;
   }
 
-  const artifactClient = new DefaultArtifactClient();
-  await artifactClient.uploadArtifact(artifactName, filesToUpload, workingDirectory, {
-    compressionLevel: 6
-  });
+  const client = new DefaultArtifactClient();
+  await client.uploadArtifact(name, files, cwd, { compressionLevel: 6 });
+  core.info(`Uploaded ${files.length} file(s) as '${name}'`);
 }
+
+/* ── Main ───────────────────────────────────────────────── */
 
 async function main() {
   try {
-    const runSpec = core.getInput('run', { required: true });
-    const workingDirectoryInput = core.getInput('working-directory') || '.';
-    const outputsInput = core.getInput('outputs');
-    const artifactsInput = core.getInput('artifacts');
+    const version      = core.getInput('version') || 'latest';
+    const installUrl   = core.getInput('install-url');
+    const workspace    = core.getInput('workspace');
+    const providersRaw = core.getInput('providers');
+    const runScript    = core.getInput('run');
+    const workDirInput = core.getInput('working-directory') || '.';
+    const outputsRaw   = core.getInput('outputs');
+    const artifactsRaw = core.getInput('artifacts');
     const artifactName = core.getInput('artifact-name') || 'tinx-artifacts';
-    const tinxVersion = core.getInput('tinx-version') || 'v0.1.4';
-    const installUrl = core.getInput('install-url') || 'https://raw.githubusercontent.com/sourceplane/tinx/main/install.sh';
 
-    const workingDirectory = path.resolve(process.cwd(), workingDirectoryInput);
+    const cwd = path.resolve(process.cwd(), workDirInput);
+    const providers = lines(providersRaw);
 
-    const tinxBin = await installTinx({ version: tinxVersion, installUrl });
-    await runTinx(tinxBin, runSpec, workingDirectory);
-    await collectOutputs(outputsInput, workingDirectory);
-    await uploadArtifacts(artifactsInput, artifactName, workingDirectory);
+    // 1 ── Install tinx
+    core.startGroup('Install tinx');
+    const bin = await installTinx(version, installUrl);
+    core.endGroup();
+
+    // 2 ── Configure workspace or install standalone providers
+    let wsName = '';
+    if (workspace) {
+      core.startGroup('Initialize workspace');
+      wsName = await initWorkspace(bin, workspace, providers, cwd);
+      core.endGroup();
+    } else if (providers.length) {
+      core.startGroup('Install providers');
+      await installProviders(bin, providers, cwd);
+      core.endGroup();
+    }
+
+    // 3 ── Execute user commands
+    if (runScript) {
+      core.startGroup('Run');
+      await runCommands(bin, runScript, wsName, cwd);
+      core.endGroup();
+    }
+
+    // 4 ── Collect outputs
+    if (outputsRaw) {
+      core.startGroup('Collect outputs');
+      await collectOutputs(outputsRaw, cwd);
+      core.endGroup();
+    }
+
+    // 5 ── Upload artifacts
+    if (artifactsRaw) {
+      core.startGroup('Upload artifacts');
+      await uploadArtifacts(artifactsRaw, artifactName, cwd);
+      core.endGroup();
+    }
   } catch (error) {
     core.setFailed(error instanceof Error ? error.message : String(error));
   }

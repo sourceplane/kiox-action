@@ -1,46 +1,63 @@
-name: "tinx-action"
-description: "Thin GitHub Action wrapper for tinx providers"
+name: "tinx"
+description: "Install and run tinx — OCI-native provider runtime and workspace manager"
 author: "sourceplane"
 branding:
   icon: "package"
   color: "blue"
 
 inputs:
+  version:
+    description: "tinx version to install (e.g. v0.3.0, latest)"
+    required: false
+    default: "latest"
+  install-url:
+    description: "Override for the tinx installer script URL"
+    required: false
+  workspace:
+    description: |
+      Workspace to initialize. Accepts either:
+        - Path to a tinx.yaml workspace manifest file
+        - Workspace name (pair with 'providers' to define the provider set)
+    required: false
+  providers:
+    description: |
+      Provider install specs (one per line).
+      When combined with 'workspace', providers are added to the workspace.
+      When used standalone, providers are installed individually.
+      Format: <source> [as <alias>] [--input key=value]
+      Examples:
+        sourceplane/lite-ci as lite-ci
+        gha://azure/setup-helm@v4 as helm --input version=3.18.4
+    required: false
   run:
-    description: "Provider run spec in CLI form: <provider-ref> <capability> [args...]"
-    required: true
+    description: |
+      Shell commands to execute after setup.
+      tinx and any installed provider aliases are available on PATH.
+      If a workspace is active, commands run inside the workspace context.
+    required: false
   working-directory:
-    description: "Working directory used when running tinx"
+    description: "Working directory for all tinx operations"
     required: false
     default: "."
   outputs:
     description: |
-      Optional output mappings (one per line):
-      output_name=relative/or/absolute/file_path
+      Output file mappings (one per line): name=file_path
+      File contents are set as individual step outputs
+      and aggregated into the outputs-json output.
     required: false
-    default: ""
   artifacts:
-    description: |
-      Optional artifact paths to upload (one per line).
-      Paths are resolved from working-directory unless absolute.
+    description: "Artifact file paths to upload (one per line)"
     required: false
-    default: ""
   artifact-name:
-    description: "Artifact bundle name when artifacts are uploaded"
+    description: "Name for the uploaded artifact bundle"
     required: false
     default: "tinx-artifacts"
-  tinx-version:
-    description: "tinx version to install (default: v0.1.4)"
-    required: false
-    default: "v0.1.4"
-  install-url:
-    description: "Installer script URL"
-    required: false
-    default: "https://raw.githubusercontent.com/sourceplane/tinx/main/install.sh"
 
 outputs:
+  tinx-version:
+    description: "Installed tinx version string"
   outputs-json:
-    description: "JSON object built from the provided outputs mapping"
+    description: "JSON object built from the output file mappings"
 
 runs:
   using: "node20"

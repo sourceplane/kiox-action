@@ -1,23 +1,72 @@
-name: example
+name: tinx CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  run-provider:
+  # Setup only — install tinx for use in subsequent steps
+  setup-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+      - run: tinx version
+
+  # Single provider — install and run a provider directly
+  single-provider:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - id: tinx
+      - id: plan
         uses: ./
         with:
-          run: ghcr.io/sourceplane/lite-ci:v0.0.2 plan
+          providers: |
+            sourceplane/lite-ci as lite-ci
+          run: |
+            tinx run lite-ci plan
           outputs: |
             plan=plan.json
           artifacts: |
             plan.json
 
       - name: Show mapped output
-        run: |
-          echo "json=${{ steps.tinx.outputs.outputs-json }}"
+        run: echo '${{ steps.plan.outputs.outputs-json }}'
+
+  # Workspace from manifest — initialize from tinx.yaml
+  workspace-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          workspace: tinx.yaml
+          run: |
+            tinx -- lite-ci run plan
+
+  # Workspace from flags — create workspace on the fly
+  workspace-flags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          workspace: dev
+          providers: |
+            sourceplane/lite-ci as lite-ci
+          run: |
+            tinx -- lite-ci run plan
+
+  # GitHub Action as provider
+  gha-provider:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./
+        with:
+          providers: |
+            gha://azure/setup-helm@v4 as helm --input version=3.18.4
+          run: |
+            helm version --short

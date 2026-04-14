@@ -104,7 +104,7 @@ async function capture(bin, args, options = {}) {
 
 function parseWorkspaceInfo(output, fallbackRoot) {
   const name = output.match(/^workspace:\s*(.+)$/m)?.[1]?.trim() || path.basename(fallbackRoot);
-  const root = output.match(/^root:\s*(.+)$/m)?.[1]?.trim() || fallbackRoot;
+  const root = fallbackRoot;
   return {
     name,
     root,

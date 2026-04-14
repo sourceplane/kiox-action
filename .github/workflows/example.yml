@@ -17,18 +17,20 @@ jobs:
   transient-workspace:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - id: node
         uses: ./
         with:
           providers: |
-            core/node as node
+            sourceplane/lite-ci:v0.2.25 as lite-ci
           run: |
             mkdir -p .tmp
-            node --version | tee .tmp/node-version.txt
+            lite-ci --help > .tmp/lite-ci-help.txt
           outputs: |
-            node-version=.tmp/node-version.txt
+            lite-ci-help=.tmp/lite-ci-help.txt
           artifacts: |
-            .tmp/node-version.txt
+            .tmp/lite-ci-help.txt
 
       - name: Show mapped output
         run: echo '${{ steps.node.outputs.outputs-json }}'
@@ -41,7 +43,7 @@ jobs:
         with:
           workspace: ./.tinx-ci
           providers: |
-            core/node as node
+            sourceplane/lite-ci:v0.2.25 as lite-ci
 
       - name: Use exported workspace root
-        run: tinx --workspace "$TINX_WORKSPACE_ROOT" -- node --version
+        run: tinx --workspace "$TINX_WORKSPACE_ROOT" provider list

@@ -25,9 +25,9 @@ steps:
   - uses: sourceplane/tinx-action@v2
     with:
       providers: |
-        core/node as node
+        sourceplane/lite-ci:v0.2.25 as lite-ci
       run: |
-        node --version
+        lite-ci --help
 ```
 
 When `providers` is set without `workspace`, the action creates a transient workspace under the runner temp directory and exports its root as `TINX_WORKSPACE_ROOT`.
@@ -41,9 +41,9 @@ steps:
     with:
       workspace: ./.github/tinx-ci
       providers: |
-        core/node as node
+        sourceplane/lite-ci:v0.2.25 as lite-ci
 
-  - run: tinx --workspace "$TINX_WORKSPACE_ROOT" -- node --version
+  - run: tinx --workspace "$TINX_WORKSPACE_ROOT" provider list
 ```
 
 ### Workspace from manifest
@@ -57,7 +57,7 @@ steps:
     with:
       workspace: .github/tinx.yaml
       run: |
-        tinx -- lite-ci plan
+        lite-ci plan
 ```
 
 The referenced manifest must be a tinx workspace manifest with `kind: Workspace`, not a provider `tinx.yaml`.
@@ -73,9 +73,9 @@ steps:
     with:
       workspace: dev
       providers: |
-        core/node as node
+        sourceplane/lite-ci:v0.2.25 as lite-ci
       run: |
-        node --version
+        lite-ci --help
 ```
 
 ### Outputs and artifacts
@@ -90,17 +90,17 @@ steps:
     uses: sourceplane/tinx-action@v2
     with:
       providers: |
-        core/node as node
+        sourceplane/lite-ci:v0.2.25 as lite-ci
       run: |
         mkdir -p .tmp
-        node --version > .tmp/node-version.txt
+        lite-ci --help > .tmp/lite-ci-help.txt
       outputs: |
-        node-version=.tmp/node-version.txt
+        lite-ci-help=.tmp/lite-ci-help.txt
       artifacts: |
-        .tmp/node-version.txt
+        .tmp/lite-ci-help.txt
 
   - run: echo '${{ steps.node.outputs.outputs-json }}'
-  - run: echo "${{ steps.node.outputs.node-version }}"
+  - run: echo "${{ steps.node.outputs.lite-ci-help }}"
 ```
 
 ## Inputs

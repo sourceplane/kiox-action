@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Setup only — install tinx for use in subsequent steps
   setup-only:
     runs-on: ubuntu-latest
     steps:
@@ -15,58 +14,34 @@ jobs:
       - uses: ./
       - run: tinx version
 
-  # Single provider — install and run a provider directly
-  single-provider:
+  transient-workspace:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - id: plan
+      - id: node
         uses: ./
         with:
           providers: |
-            sourceplane/lite-ci as lite-ci
+            core/node as node
           run: |
-            tinx run lite-ci plan
+            mkdir -p .tmp
+            node --version | tee .tmp/node-version.txt
           outputs: |
-            plan=plan.json
+            node-version=.tmp/node-version.txt
           artifacts: |
-            plan.json
+            .tmp/node-version.txt
 
       - name: Show mapped output
-        run: echo '${{ steps.plan.outputs.outputs-json }}'
+        run: echo '${{ steps.node.outputs.outputs-json }}'
 
-  # Workspace from manifest — initialize from tinx.yaml
-  workspace-manifest:
+  reusable-workspace:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./
         with:
-          workspace: tinx.yaml
-          run: |
-            tinx -- lite-ci run plan
-
-  # Workspace from flags — create workspace on the fly
-  workspace-flags:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./
-        with:
-          workspace: dev
+          workspace: ./.tinx-ci
           providers: |
-            sourceplane/lite-ci as lite-ci
-          run: |
-            tinx -- lite-ci run plan
+            core/node as node
 
-  # GitHub Action as provider
-  gha-provider:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: ./
-        with:
-          providers: |
-            gha://azure/setup-helm@v4 as helm --input version=3.18.4
-          run: |
-            helm version --short
+      - name: Use exported workspace root
+        run: tinx --workspace "$TINX_WORKSPACE_ROOT" -- node --version

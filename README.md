@@ -2,7 +2,9 @@
 
 GitHub Action for [tinx](https://github.com/sourceplane/tinx) — the OCI-native provider runtime.
 
-Installs `tinx`, optionally initializes a workspace or installs providers, and runs commands.
+Installs `tinx`, optionally initializes a workspace, adds providers, and runs commands through the current workspace-first tinx execution model.
+
+When `workspace` or `providers` is set, the action runs the `run` script inside a tinx workspace. That matches current tinx behavior, where provider execution goes through `tinx exec` or `tinx -- ...`, not `tinx run`.
 
 ## Usage
 
@@ -16,42 +18,49 @@ steps:
   - run: tinx version
 ```
 
-### Run a single provider
+### Run commands in a transient workspace
 
 ```yaml
 steps:
-  - uses: actions/checkout@v4
-  - uses: sourceplane/tinx-action@v2
-    with:
-      run: tinx run ghcr.io/sourceplane/lite-ci:v0.0.2 plan
-```
-
-### Install providers and run
-
-```yaml
-steps:
-  - uses: actions/checkout@v4
   - uses: sourceplane/tinx-action@v2
     with:
       providers: |
-        sourceplane/lite-ci as lite-ci
+        core/node as node
       run: |
-        tinx run lite-ci plan
+        node --version
+```
+
+When `providers` is set without `workspace`, the action creates a transient workspace under the runner temp directory and exports its root as `TINX_WORKSPACE_ROOT`.
+
+### Initialize a reusable workspace
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: sourceplane/tinx-action@v2
+    with:
+      workspace: ./.github/tinx-ci
+      providers: |
+        core/node as node
+
+  - run: tinx --workspace "$TINX_WORKSPACE_ROOT" -- node --version
 ```
 
 ### Workspace from manifest
 
-Point `workspace` at a `tinx.yaml` manifest file to initialize the full provider set:
+Point `workspace` at a workspace manifest file to initialize the full provider set:
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
   - uses: sourceplane/tinx-action@v2
     with:
-      workspace: tinx.yaml
+      workspace: .github/tinx.yaml
       run: |
-        tinx -- lite-ci run plan
+        tinx -- lite-ci plan
 ```
+
+The referenced manifest must be a tinx workspace manifest with `kind: Workspace`, not a provider `tinx.yaml`.
 
 ### Workspace from flags
 
@@ -64,25 +73,9 @@ steps:
     with:
       workspace: dev
       providers: |
-        sourceplane/lite-ci as lite-ci
         core/node as node
       run: |
-        tinx -- lite-ci run plan
-        tinx -- node deploy
-```
-
-### GitHub Action as provider
-
-Use the `gha://` source to install a GitHub Action as a tinx provider:
-
-```yaml
-steps:
-  - uses: sourceplane/tinx-action@v2
-    with:
-      providers: |
-        gha://azure/setup-helm@v4 as helm --input version=3.18.4
-      run: |
-        helm version --short
+        node --version
 ```
 
 ### Outputs and artifacts
@@ -93,31 +86,31 @@ Map output files to step outputs and upload artifacts in one step:
 steps:
   - uses: actions/checkout@v4
 
-  - id: plan
+  - id: node
     uses: sourceplane/tinx-action@v2
     with:
       providers: |
-        sourceplane/lite-ci as lite-ci
+        core/node as node
       run: |
-        tinx run lite-ci plan
+        mkdir -p .tmp
+        node --version > .tmp/node-version.txt
       outputs: |
-        plan=plan.json
-        version=.tmp/version.txt
+        node-version=.tmp/node-version.txt
       artifacts: |
-        plan.json
+        .tmp/node-version.txt
 
-  - run: echo '${{ steps.plan.outputs.outputs-json }}'
-  - run: echo "${{ fromJSON(steps.plan.outputs.outputs-json).plan }}"
+  - run: echo '${{ steps.node.outputs.outputs-json }}'
+  - run: echo "${{ steps.node.outputs.node-version }}"
 ```
 
 ## Inputs
 
 | Name | Default | Description |
 |------|---------|-------------|
-| `version` | `latest` | tinx version to install (e.g. `v0.3.0`, `latest`) |
+| `version` | `latest` | tinx version to install (for example `v0.3.0` or `latest`) |
 | `install-url` | — | Override for the tinx installer script URL |
-| `workspace` | — | Workspace manifest path or workspace name to initialize |
-| `providers` | — | Provider install specs, one per line (`<source> [as <alias>] [flags]`) |
+| `workspace` | — | Workspace manifest path (`kind: Workspace`) or workspace directory/name to initialize |
+| `providers` | — | Provider specs to add to the workspace, one per line (`<source> [as <alias>] [--plain-http]`) |
 | `run` | — | Shell commands to execute after setup |
 | `working-directory` | `.` | Working directory for all operations |
 | `outputs` | — | Output file mappings (`name=path`, one per line) |
@@ -129,14 +122,16 @@ steps:
 | Name | Description |
 |------|-------------|
 | `tinx-version` | Installed tinx version string |
+| `workspace-name` | Initialized workspace name |
+| `workspace-root` | Initialized workspace root directory |
 | `outputs-json` | JSON object assembled from output file mappings |
 
 ## How it works
 
 1. **Install** — Downloads `tinx` via the official installer and adds it to `PATH`.
-2. **Workspace** (optional) — Initializes and activates a workspace from a manifest or name + providers.
-3. **Providers** (optional) — Installs standalone providers when no workspace is configured.
-4. **Run** (optional) — Executes shell commands with `tinx` and provider aliases on `PATH`.
+2. **Workspace** (optional) — Initializes a named, directory-backed, or manifest-backed workspace when `workspace` or `providers` is set.
+3. **Providers** (optional) — Adds providers to that workspace with `tinx add`.
+4. **Run** (optional) — Executes shell commands inside the workspace environment so provider aliases are available on `PATH`.
 5. **Outputs** (optional) — Reads mapped files and sets them as step outputs.
 6. **Artifacts** (optional) — Uploads files as workflow artifacts.
 
@@ -146,10 +141,17 @@ The action exports the following for use in subsequent steps:
 
 | Variable | Description |
 |----------|-------------|
+| `TINX_HOME` | Global tinx home used by the action |
+| `TINX_GLOBAL_HOME` | Same global tinx home path |
 | `TINX_INSTALL_DIR` | Directory containing the `tinx` binary |
-| `TINX_WORKSPACE` | Active workspace name (set when `workspace` input is provided) |
+| `TINX_BIN` | Full path to the installed `tinx` binary |
+| `TINX_WORKSPACE` | Initialized workspace name |
+| `TINX_WORKSPACE_ROOT` | Initialized workspace root directory |
+| `TINX_WORKSPACE_MANIFEST` | Initialized workspace manifest path |
 
 The `tinx` binary directory is added to `PATH` automatically.
+
+For later steps, prefer `tinx --workspace "$TINX_WORKSPACE_ROOT" -- <command>` if you want to target the workspace created by the action explicitly.
 
 ## Runtime
 
@@ -159,7 +161,7 @@ The `tinx` binary directory is added to `PATH` automatically.
 
 ## Security
 
-- Provider installs use direct argument passing (no shell interpolation).
+- Provider additions use direct argument passing (no shell interpolation).
 - Pin `tinx-action` to a specific SHA or tag for reproducible CI.
 - Use `version` to pin a specific `tinx` release.
 - Avoid `--plain-http` outside trusted local/dev environments.

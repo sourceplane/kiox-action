@@ -11,44 +11,121 @@ const { DefaultArtifactClient } = require('@actions/artifact');
 function lines(input) {
   return (input || '')
     .split(/\r?\n/)
-    .map(l => l.trim())
+    .map(line => line.trim())
     .filter(Boolean);
 }
 
 function parseOutputMappings(raw) {
   return lines(raw).map(entry => {
-    const i = entry.indexOf('=');
-    if (i <= 0 || i === entry.length - 1) {
-      throw new Error(`Invalid output mapping '${entry}' — expected name=path`);
+    const index = entry.indexOf('=');
+    if (index <= 0 || index === entry.length - 1) {
+      throw new Error(`Invalid output mapping '${entry}' - expected name=path`);
     }
-    return { name: entry.slice(0, i).trim(), path: entry.slice(i + 1).trim() };
+    return { name: entry.slice(0, index).trim(), path: entry.slice(index + 1).trim() };
   });
 }
 
-function abs(base, p) {
-  return path.isAbsolute(p) ? p : path.join(base, p);
+function abs(base, value) {
+  return path.isAbsolute(value) ? value : path.join(base, value);
 }
 
-function shellQuote(s) {
-  return "'" + s.replace(/'/g, "'\\''" ) + "'";
+function shellQuote(value) {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-async function fileExists(p) {
+function splitCommandLine(input) {
+  const words = [];
+  let current = '';
+  let quote = '';
+  let escape = false;
+
+  for (const ch of input || '') {
+    if (escape) {
+      current += ch;
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && quote !== "'") {
+      escape = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        quote = '';
+        continue;
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        words.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += ch;
+  }
+
+  if (escape) {
+    current += '\\';
+  }
+  if (quote) {
+    throw new Error(`Unterminated quote in provider spec: ${input}`);
+  }
+  if (current) {
+    words.push(current);
+  }
+  return words;
+}
+
+async function fileExists(filePath) {
   try {
-    await fsp.access(p);
+    await fsp.access(filePath);
     return true;
   } catch {
     return false;
   }
 }
 
-async function capture(bin, args) {
+async function capture(bin, args, options = {}) {
   let stdout = '';
   await exec.exec(bin, args, {
-    listeners: { stdout: d => { stdout += d.toString(); } },
+    listeners: { stdout: data => { stdout += data.toString(); } },
     silent: true,
+    ...options,
   });
   return stdout.trim();
+}
+
+function parseWorkspaceInfo(output, fallbackRoot) {
+  const name = output.match(/^workspace:\s*(.+)$/m)?.[1]?.trim() || path.basename(fallbackRoot);
+  const root = fallbackRoot;
+  return {
+    name,
+    root,
+    manifest: path.join(root, 'tinx.yaml'),
+  };
+}
+
+async function ensureTinxHome() {
+  const home = process.env.TINX_HOME || path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-home');
+  await fsp.mkdir(home, { recursive: true });
+  core.exportVariable('TINX_HOME', home);
+  core.exportVariable('TINX_GLOBAL_HOME', home);
+  return home;
+}
+
+function exportWorkspaceInfo(info) {
+  core.exportVariable('TINX_WORKSPACE', info.name);
+  core.exportVariable('TINX_WORKSPACE_ROOT', info.root);
+  core.exportVariable('TINX_WORKSPACE_MANIFEST', info.manifest);
+  core.setOutput('workspace-name', info.name);
+  core.setOutput('workspace-root', info.root);
 }
 
 /* ── Install ────────────────────────────────────────────── */
@@ -58,6 +135,7 @@ async function installTinx(version, installUrl) {
   await fsp.mkdir(dir, { recursive: true });
 
   core.exportVariable('TINX_INSTALL_DIR', dir);
+  core.exportVariable('TINX_BIN', path.join(dir, 'tinx'));
   core.addPath(dir);
 
   const url = installUrl || 'https://raw.githubusercontent.com/sourceplane/tinx/main/install.sh';
@@ -74,65 +152,69 @@ async function installTinx(version, installUrl) {
   const bin = path.join(dir, 'tinx');
   await fsp.access(bin, fs.constants.X_OK);
 
-  const ver = await capture(bin, ['version']);
-  core.info(`tinx ${ver} installed → ${bin}`);
-  core.setOutput('tinx-version', ver);
+  const resolvedVersion = await capture(bin, ['version']);
+  core.info(`tinx ${resolvedVersion} installed -> ${bin}`);
+  core.setOutput('tinx-version', resolvedVersion);
   return bin;
 }
 
 /* ── Workspace ──────────────────────────────────────────── */
 
-async function initWorkspace(bin, workspace, providers, cwd) {
-  const resolved = abs(cwd, workspace);
-  const isFile = (await fileExists(resolved)) && (await fsp.stat(resolved)).isFile();
-  let name;
-
-  if (isFile) {
-    core.info(`Initializing workspace from manifest: ${resolved}`);
-    await exec.exec(bin, ['init', resolved], { cwd });
-
-    const yaml = await fsp.readFile(resolved, 'utf8');
-    const m = yaml.match(/^workspace:\s*(.+)$/m);
-    if (!m) {
-      throw new Error(
-        `Cannot extract workspace name from ${workspace}. Ensure the manifest contains a 'workspace:' field.`
-      );
+async function resolveWorkspaceTarget(cwd, workspaceInput) {
+  if (workspaceInput) {
+    const resolved = abs(cwd, workspaceInput);
+    if (await fileExists(resolved)) {
+      const stat = await fsp.stat(resolved);
+      if (stat.isFile()) {
+        return { initTarget: resolved, root: path.dirname(resolved), implicit: false };
+      }
     }
-    name = m[1].trim();
-  } else {
-    name = workspace;
-    const args = ['init', name];
-    for (const p of providers) {
-      args.push('-p', ...p.split(/\s+/));
-    }
-    core.info(`Initializing workspace '${name}' with ${providers.length} provider(s)`);
-    await exec.exec(bin, args, { cwd });
+    return { initTarget: resolved, root: resolved, implicit: false };
   }
 
-  core.exportVariable('TINX_WORKSPACE', name);
-  return name;
+  const root = await fsp.mkdtemp(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-action-workspace-'));
+  return { initTarget: root, root, implicit: true };
 }
 
-/* ── Providers (standalone) ─────────────────────────────── */
+async function describeWorkspace(bin, workspaceRoot, cwd) {
+  const output = await capture(bin, ['--workspace', workspaceRoot, 'workspace', 'current'], { cwd });
+  return parseWorkspaceInfo(output, workspaceRoot);
+}
 
-async function installProviders(bin, providers, cwd) {
+async function initWorkspace(bin, workspaceInput, cwd) {
+  const target = await resolveWorkspaceTarget(cwd, workspaceInput);
+  if (target.implicit) {
+    core.info(`Initializing transient workspace: ${target.root}`);
+  } else {
+    core.info(`Initializing workspace: ${target.initTarget}`);
+  }
+
+  await exec.exec(bin, ['init', target.initTarget], { cwd });
+  const info = await describeWorkspace(bin, target.root, cwd);
+  return { ...info, implicit: target.implicit };
+}
+
+async function addProviders(bin, workspaceRoot, providers, cwd) {
   for (const spec of providers) {
-    core.info(`Installing provider: ${spec}`);
-    const args = ['install', ...spec.split(/\s+/)];
+    core.info(`Adding provider: ${spec}`);
+    const args = ['--workspace', workspaceRoot, 'add', ...splitCommandLine(spec)];
     await exec.exec(bin, args, { cwd });
   }
 }
 
 /* ── Run ────────────────────────────────────────────────── */
 
-async function runCommands(bin, script, workspaceName, cwd) {
-  const parts = [];
-  if (workspaceName) {
-    parts.push(`${shellQuote(bin)} use ${shellQuote(workspaceName)}`);
+async function runCommands(bin, script, workspaceRoot, cwd) {
+  if (!workspaceRoot) {
+    await exec.exec('bash', ['-e', '-o', 'pipefail', '-c', script], {
+      cwd,
+      failOnStdErr: false,
+    });
+    return;
   }
-  parts.push(script);
 
-  await exec.exec('bash', ['-e', '-o', 'pipefail', '-c', parts.join('\n')], {
+  const wrappedScript = [`cd ${shellQuote(cwd)}`, script].join('\n');
+  await exec.exec(bin, ['--workspace', workspaceRoot, 'exec', '--', 'bash', '-e', '-o', 'pipefail', '-c', wrappedScript], {
     cwd,
     failOnStdErr: false,
   });
@@ -142,14 +224,16 @@ async function runCommands(bin, script, workspaceName, cwd) {
 
 async function collectOutputs(raw, cwd) {
   const mappings = parseOutputMappings(raw);
-  if (!mappings.length) return;
+  if (!mappings.length) {
+    return;
+  }
 
   const payload = {};
-  for (const m of mappings) {
-    const p = abs(cwd, m.path);
-    const val = (await fsp.readFile(p, 'utf8')).trim();
-    core.setOutput(m.name, val);
-    payload[m.name] = val;
+  for (const mapping of mappings) {
+    const filePath = abs(cwd, mapping.path);
+    const value = (await fsp.readFile(filePath, 'utf8')).trim();
+    core.setOutput(mapping.name, value);
+    payload[mapping.name] = value;
   }
   core.setOutput('outputs-json', JSON.stringify(payload));
 }
@@ -157,13 +241,17 @@ async function collectOutputs(raw, cwd) {
 /* ── Artifacts ──────────────────────────────────────────── */
 
 async function uploadArtifacts(raw, name, cwd) {
-  const paths = lines(raw).map(p => abs(cwd, p));
-  if (!paths.length) return;
+  const paths = lines(raw).map(filePath => abs(cwd, filePath));
+  if (!paths.length) {
+    return;
+  }
 
   const files = [];
-  for (const p of paths) {
+  for (const filePath of paths) {
     try {
-      if ((await fsp.stat(p)).isFile()) files.push(p);
+      if ((await fsp.stat(filePath)).isFile()) {
+        files.push(filePath);
+      }
     } catch {
       /* skip missing */
     }
@@ -183,51 +271,51 @@ async function uploadArtifacts(raw, name, cwd) {
 
 async function main() {
   try {
-    const version      = core.getInput('version') || 'latest';
-    const installUrl   = core.getInput('install-url');
-    const workspace    = core.getInput('workspace');
+    const version = core.getInput('version') || 'latest';
+    const installUrl = core.getInput('install-url');
+    const workspace = core.getInput('workspace');
     const providersRaw = core.getInput('providers');
-    const runScript    = core.getInput('run');
+    const runScript = core.getInput('run');
     const workDirInput = core.getInput('working-directory') || '.';
-    const outputsRaw   = core.getInput('outputs');
+    const outputsRaw = core.getInput('outputs');
     const artifactsRaw = core.getInput('artifacts');
     const artifactName = core.getInput('artifact-name') || 'tinx-artifacts';
 
     const cwd = path.resolve(process.cwd(), workDirInput);
     const providers = lines(providersRaw);
 
-    // 1 ── Install tinx
+    await ensureTinxHome();
+
     core.startGroup('Install tinx');
     const bin = await installTinx(version, installUrl);
     core.endGroup();
 
-    // 2 ── Configure workspace or install standalone providers
-    let wsName = '';
-    if (workspace) {
-      core.startGroup('Initialize workspace');
-      wsName = await initWorkspace(bin, workspace, providers, cwd);
-      core.endGroup();
-    } else if (providers.length) {
-      core.startGroup('Install providers');
-      await installProviders(bin, providers, cwd);
+    let workspaceInfo = null;
+    if (workspace || providers.length) {
+      core.startGroup('Prepare workspace');
+      workspaceInfo = await initWorkspace(bin, workspace, cwd);
+      if (providers.length) {
+        await addProviders(bin, workspaceInfo.root, providers, cwd);
+      }
+      exportWorkspaceInfo(workspaceInfo);
+      if (workspaceInfo.implicit) {
+        core.info(`Providers are attached to a transient workspace at ${workspaceInfo.root}`);
+      }
       core.endGroup();
     }
 
-    // 3 ── Execute user commands
     if (runScript) {
       core.startGroup('Run');
-      await runCommands(bin, runScript, wsName, cwd);
+      await runCommands(bin, runScript, workspaceInfo && workspaceInfo.root, cwd);
       core.endGroup();
     }
 
-    // 4 ── Collect outputs
     if (outputsRaw) {
       core.startGroup('Collect outputs');
       await collectOutputs(outputsRaw, cwd);
       core.endGroup();
     }
 
-    // 5 ── Upload artifacts
     if (artifactsRaw) {
       core.startGroup('Upload artifacts');
       await uploadArtifacts(artifactsRaw, artifactName, cwd);

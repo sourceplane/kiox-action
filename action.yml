@@ -1,5 +1,5 @@
 name: "tinx"
-description: "Install and run tinx — OCI-native provider runtime and workspace manager"
+description: "Install tinx, prepare a workspace, and run commands in the current tinx execution model"
 author: "sourceplane"
 branding:
   icon: "package"
@@ -15,25 +15,25 @@ inputs:
     required: false
   workspace:
     description: |
-      Workspace to initialize. Accepts either:
-        - Path to a tinx.yaml workspace manifest file
-        - Workspace name (pair with 'providers' to define the provider set)
+      Workspace target to initialize. Accepts either:
+        - Path to an existing tinx workspace manifest file (kind: Workspace)
+        - Workspace directory or name to create
     required: false
   providers:
     description: |
-      Provider install specs (one per line).
-      When combined with 'workspace', providers are added to the workspace.
-      When used standalone, providers are installed individually.
-      Format: <source> [as <alias>] [--input key=value]
+      Provider specs to add to a workspace (one per line).
+      When 'workspace' is omitted, the action creates a transient workspace for this step.
+      Format: <source> [as <alias>] [--plain-http]
       Examples:
-        sourceplane/lite-ci as lite-ci
-        gha://azure/setup-helm@v4 as helm --input version=3.18.4
+        core/node as node
+        ghcr.io/acme/kubectl:v1.31.0 as kubectl --plain-http
     required: false
   run:
     description: |
       Shell commands to execute after setup.
-      tinx and any installed provider aliases are available on PATH.
-      If a workspace is active, commands run inside the workspace context.
+      tinx is always available on PATH.
+      When a workspace is configured, commands run inside the workspace environment,
+      so provider aliases are available on PATH for this step.
     required: false
   working-directory:
     description: "Working directory for all tinx operations"
@@ -56,6 +56,10 @@ inputs:
 outputs:
   tinx-version:
     description: "Installed tinx version string"
+  workspace-name:
+    description: "Initialized workspace name"
+  workspace-root:
+    description: "Initialized workspace root directory"
   outputs-json:
     description: "JSON object built from the output file mappings"
 

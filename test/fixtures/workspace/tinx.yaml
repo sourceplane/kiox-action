@@ -1,0 +1,7 @@
+apiVersion: tinx.io/v1
+kind: Workspace
+workspace: fixture-workspace
+
+providers:
+  lite-ci:
+    source: sourceplane/lite-ci:v0.2.25

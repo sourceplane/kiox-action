@@ -98,8 +98,9 @@ jobs:
 
       - name: Assert transient workspace behavior
         run: |
+          artifact_file="$(find downloaded-artifacts -type f -name pwd.txt | head -n1)"
           case "${{ steps.action.outputs.workspace-root }}" in
-            "${RUNNER_TEMP}"/tinx-action-workspace-*) ;;
+            ${RUNNER_TEMP}/tinx-action-workspace-*) ;;
             *)
               echo "unexpected workspace root: ${{ steps.action.outputs.workspace-root }}" >&2
               exit 1
@@ -107,7 +108,8 @@ jobs:
           esac
           test "${{ steps.action.outputs.pwd }}" = "$GITHUB_WORKSPACE"
           test "${{ steps.action.outputs.workspace }}" = "${{ steps.action.outputs.workspace-root }}"
-          test "$(cat downloaded-artifacts/pwd.txt)" = "$GITHUB_WORKSPACE"
+          test -n "$artifact_file"
+          test "$(cat "$artifact_file")" = "$GITHUB_WORKSPACE"
           grep -F -- "init ${{ steps.action.outputs.workspace-root }}" "$TINX_TEST_LOG"
           grep -F -- "--workspace ${{ steps.action.outputs.workspace-root }} add sourceplane/lite-ci:v0.2.25 as lite-ci" "$TINX_TEST_LOG"
           grep -F -- "--workspace ${{ steps.action.outputs.workspace-root }} exec" "$TINX_TEST_LOG"

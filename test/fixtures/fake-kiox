@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_file="${KIOX_TEST_LOG:-}"
+
+log_command() {
+  if [[ -n "$log_file" ]]; then
+    printf '%s\n' "$*" >> "$log_file"
+  fi
+}
+
+workspace_name() {
+  local root="$1"
+  local manifest="$root/kiox.yaml"
+  if [[ -f "$manifest" ]]; then
+    local name
+    name="$(sed -n 's/^workspace:[[:space:]]*//p' "$manifest" | head -n1)"
+    if [[ -n "$name" ]]; then
+      printf '%s\n' "$name"
+      return
+    fi
+  fi
+  basename "$root"
+}
+
+log_command "$*"
+
+if [[ "$#" -eq 1 && "$1" == "version" ]]; then
+  echo "kiox test"
+  exit 0
+fi
+
+if [[ "$#" -ge 2 && "$1" == "init" ]]; then
+  target="$2"
+  if [[ -f "$target" ]]; then
+    target="$(dirname "$target")"
+  fi
+  mkdir -p "$target"
+  exit 0
+fi
+
+if [[ "$#" -ge 4 && "$1" == "--workspace" && "$3" == "workspace" && "$4" == "current" ]]; then
+  root="$2"
+  echo "workspace: $(workspace_name "$root")"
+  echo "root: $root"
+  exit 0
+fi
+
+if [[ "$#" -ge 4 && "$1" == "--workspace" && "$3" == "add" ]]; then
+  mkdir -p "$2"
+  exit 0
+fi
+
+if [[ "$#" -ge 4 && "$1" == "--workspace" && "$3" == "provider" && "$4" == "list" ]]; then
+  echo "providers: ok"
+  exit 0
+fi
+
+if [[ "$#" -ge 4 && "$1" == "--workspace" && "$3" == "exec" ]]; then
+  export KIOX_WORKSPACE_ROOT="$2"
+  shift 3
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  exec "$@"
+fi
+
+echo "unexpected fake kiox invocation: $*" >&2
+exit 1

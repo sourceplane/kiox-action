@@ -108,40 +108,40 @@ function parseWorkspaceInfo(output, fallbackRoot) {
   return {
     name,
     root,
-    manifest: path.join(root, 'tinx.yaml'),
+    manifest: path.join(root, 'kiox.yaml'),
   };
 }
 
-async function ensureTinxHome() {
-  const home = process.env.TINX_HOME || path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-home');
+async function ensureKioxHome() {
+  const home = process.env.KIOX_HOME || path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'kiox-home');
   await fsp.mkdir(home, { recursive: true });
-  core.exportVariable('TINX_HOME', home);
-  core.exportVariable('TINX_GLOBAL_HOME', home);
+  core.exportVariable('KIOX_HOME', home);
+  core.exportVariable('KIOX_GLOBAL_HOME', home);
   return home;
 }
 
 function exportWorkspaceInfo(info) {
-  core.exportVariable('TINX_WORKSPACE', info.name);
-  core.exportVariable('TINX_WORKSPACE_ROOT', info.root);
-  core.exportVariable('TINX_WORKSPACE_MANIFEST', info.manifest);
+  core.exportVariable('KIOX_WORKSPACE', info.name);
+  core.exportVariable('KIOX_WORKSPACE_ROOT', info.root);
+  core.exportVariable('KIOX_WORKSPACE_MANIFEST', info.manifest);
   core.setOutput('workspace-name', info.name);
   core.setOutput('workspace-root', info.root);
 }
 
 /* ── Install ────────────────────────────────────────────── */
 
-async function installTinx(version, installUrl) {
-  const dir = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-bin');
+async function installKiox(version, installUrl) {
+  const dir = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'kiox-bin');
   await fsp.mkdir(dir, { recursive: true });
 
-  core.exportVariable('TINX_INSTALL_DIR', dir);
-  core.exportVariable('TINX_BIN', path.join(dir, 'tinx'));
+  core.exportVariable('KIOX_INSTALL_DIR', dir);
+  core.exportVariable('KIOX_BIN', path.join(dir, 'kiox'));
   core.addPath(dir);
 
-  const url = installUrl || 'https://raw.githubusercontent.com/sourceplane/tinx/main/install.sh';
+  const url = installUrl || 'https://raw.githubusercontent.com/sourceplane/kiox/main/install.sh';
   const script = [
-    `export TINX_INSTALL_DIR=${shellQuote(dir)}`,
-    `export TINX_VERSION=${shellQuote(version)}`,
+    `export KIOX_INSTALL_DIR=${shellQuote(dir)}`,
+    `export KIOX_VERSION=${shellQuote(version)}`,
     `curl -fsSL ${shellQuote(url)} | bash`,
   ].join('\n');
 
@@ -149,12 +149,12 @@ async function installTinx(version, installUrl) {
     failOnStdErr: false,
   });
 
-  const bin = path.join(dir, 'tinx');
+  const bin = path.join(dir, 'kiox');
   await fsp.access(bin, fs.constants.X_OK);
 
   const resolvedVersion = await capture(bin, ['version']);
-  core.info(`tinx ${resolvedVersion} installed -> ${bin}`);
-  core.setOutput('tinx-version', resolvedVersion);
+  core.info(`kiox ${resolvedVersion} installed -> ${bin}`);
+  core.setOutput('kiox-version', resolvedVersion);
   return bin;
 }
 
@@ -172,7 +172,7 @@ async function resolveWorkspaceTarget(cwd, workspaceInput) {
     return { initTarget: resolved, root: resolved, implicit: false };
   }
 
-  const root = await fsp.mkdtemp(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'tinx-action-workspace-'));
+  const root = await fsp.mkdtemp(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'kiox-action-workspace-'));
   return { initTarget: root, root, implicit: true };
 }
 
@@ -279,15 +279,15 @@ async function main() {
     const workDirInput = core.getInput('working-directory') || '.';
     const outputsRaw = core.getInput('outputs');
     const artifactsRaw = core.getInput('artifacts');
-    const artifactName = core.getInput('artifact-name') || 'tinx-artifacts';
+    const artifactName = core.getInput('artifact-name') || 'kiox-artifacts';
 
     const cwd = path.resolve(process.cwd(), workDirInput);
     const providers = lines(providersRaw);
 
-    await ensureTinxHome();
+    await ensureKioxHome();
 
-    core.startGroup('Install tinx');
-    const bin = await installTinx(version, installUrl);
+    core.startGroup('Install kiox');
+    const bin = await installKiox(version, installUrl);
     core.endGroup();
 
     let workspaceInfo = null;

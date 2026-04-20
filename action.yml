@@ -1,5 +1,5 @@
-name: "tinx"
-description: "Install tinx, prepare a workspace, and run commands in the current tinx execution model"
+name: "kiox"
+description: "Install kiox, prepare a workspace, and run commands in the current kiox execution model"
 author: "sourceplane"
 branding:
   icon: "package"
@@ -7,16 +7,16 @@ branding:
 
 inputs:
   version:
-    description: "tinx version to install (e.g. v0.3.0, latest)"
+    description: "kiox version to install (e.g. v0.3.0, latest)"
     required: false
     default: "latest"
   install-url:
-    description: "Override for the tinx installer script URL"
+    description: "Override for the kiox installer script URL"
     required: false
   workspace:
     description: |
       Workspace target to initialize. Accepts either:
-        - Path to an existing tinx workspace manifest file (kind: Workspace)
+        - Path to an existing kiox workspace manifest file (kind: Workspace)
         - Workspace directory or name to create
     required: false
   providers:
@@ -31,12 +31,12 @@ inputs:
   run:
     description: |
       Shell commands to execute after setup.
-      tinx is always available on PATH.
+      kiox is always available on PATH.
       When a workspace is configured, commands run inside the workspace environment,
       so provider aliases are available on PATH for this step.
     required: false
   working-directory:
-    description: "Working directory for all tinx operations"
+    description: "Working directory for all kiox operations"
     required: false
     default: "."
   outputs:
@@ -51,11 +51,11 @@ inputs:
   artifact-name:
     description: "Name for the uploaded artifact bundle"
     required: false
-    default: "tinx-artifacts"
+    default: "kiox-artifacts"
 
 outputs:
-  tinx-version:
-    description: "Installed tinx version string"
+  kiox-version:
+    description: "Installed kiox version string"
   workspace-name:
     description: "Initialized workspace name"
   workspace-root:

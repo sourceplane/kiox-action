@@ -7,11 +7,10 @@ branding:
 
 inputs:
   version:
-    description: "kiox version to install (e.g. v0.3.0, latest)"
+    description: "kiox version to install (for example v0.4.2); when omitted or set to latest, the action resolves the latest published kiox release tag"
     required: false
-    default: "latest"
   install-url:
-    description: "Override for the kiox installer script URL"
+    description: "Override for the kiox installer script URL; when omitted, the action uses install.sh from the resolved kiox tag"
     required: false
   workspace:
     description: |

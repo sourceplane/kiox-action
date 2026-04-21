@@ -107,8 +107,8 @@ steps:
 
 | Name | Default | Description |
 |------|---------|-------------|
-| `version` | `latest` | kiox version to install (for example `v0.3.0` or `latest`) |
-| `install-url` | — | Override for the kiox installer script URL |
+| `version` | — | kiox version to install (for example `v0.4.2`); when omitted or set to `latest`, the action resolves the latest published kiox release tag |
+| `install-url` | — | Override for the kiox installer script URL; when omitted, the action uses `install.sh` from the resolved kiox tag |
 | `workspace` | — | Workspace manifest path (`kind: Workspace`) or workspace directory/name to initialize |
 | `providers` | — | Provider specs to add to the workspace, one per line (`<source> [as <alias>] [--plain-http]`) |
 | `run` | — | Shell commands to execute after setup |
@@ -128,7 +128,7 @@ steps:
 
 ## How it works
 
-1. **Install** — Downloads `kiox` via the official installer and adds it to `PATH`.
+1. **Install** — Resolves a concrete kiox release tag, downloads the installer from that tag, and adds `kiox` to `PATH`.
 2. **Workspace** (optional) — Initializes a named, directory-backed, or manifest-backed workspace when `workspace` or `providers` is set.
 3. **Providers** (optional) — Adds providers to that workspace with `kiox add`.
 4. **Run** (optional) — Executes shell commands inside the workspace environment so provider aliases are available on `PATH`.
@@ -156,7 +156,7 @@ For later steps, prefer `kiox --workspace "$KIOX_WORKSPACE_ROOT" -- <command>` i
 ## Runtime
 
 - Runs as a Node.js 20 action bundled with `ncc` to `dist/index.js`.
-- Installs `kiox` via the official [install.sh](https://github.com/sourceplane/kiox/blob/main/install.sh).
+- Installs `kiox` via the official `install.sh` script from the resolved release tag.
 - Supports `ubuntu-latest`, `macos-latest`, and self-hosted runners with `curl` and `tar`.
 
 ## Security

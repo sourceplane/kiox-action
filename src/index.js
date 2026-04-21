@@ -6,6 +6,8 @@ const path = require('node:path');
 const os = require('node:os');
 const { DefaultArtifactClient } = require('@actions/artifact');
 
+const defaultKioxRepo = 'sourceplane/kiox';
+
 /* ── Helpers ────────────────────────────────────────────── */
 
 function lines(input) {
@@ -100,6 +102,44 @@ async function capture(bin, args, options = {}) {
     ...options,
   });
   return stdout.trim();
+}
+
+function githubRequestHeaders() {
+  const headers = { accept: 'application/vnd.github+json' };
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function resolveLatestKioxReleaseTag(repo = defaultKioxRepo) {
+  const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    headers: githubRequestHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`failed to resolve latest kiox release tag for ${repo}: ${response.status}`);
+  }
+  const release = await response.json();
+  const tag = typeof release?.tag_name === 'string' ? release.tag_name.trim() : '';
+  if (!tag) {
+    throw new Error(`latest release response for ${repo} did not include tag_name`);
+  }
+  return tag;
+}
+
+async function resolveKioxVersion(versionInput, repo = defaultKioxRepo) {
+  const requested = (versionInput || '').trim();
+  if (requested && requested !== 'latest') {
+    return requested;
+  }
+  const resolved = await resolveLatestKioxReleaseTag(repo);
+  core.info(`Resolved kiox version ${resolved}`);
+  return resolved;
+}
+
+function defaultInstallUrlForVersion(version, repo = defaultKioxRepo) {
+  return `https://raw.githubusercontent.com/${repo}/${version}/install.sh`;
 }
 
 function parseWorkspaceInfo(output, fallbackRoot) {
@@ -271,8 +311,9 @@ async function uploadArtifacts(raw, name, cwd) {
 
 async function main() {
   try {
-    const version = core.getInput('version') || 'latest';
-    const installUrl = core.getInput('install-url');
+    const versionInput = core.getInput('version');
+    const resolvedVersion = await resolveKioxVersion(versionInput);
+    const installUrl = core.getInput('install-url') || defaultInstallUrlForVersion(resolvedVersion);
     const workspace = core.getInput('workspace');
     const providersRaw = core.getInput('providers');
     const runScript = core.getInput('run');
@@ -287,7 +328,7 @@ async function main() {
     await ensureKioxHome();
 
     core.startGroup('Install kiox');
-    const bin = await installKiox(version, installUrl);
+    const bin = await installKiox(resolvedVersion, installUrl);
     core.endGroup();
 
     let workspaceInfo = null;
